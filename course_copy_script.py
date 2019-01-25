@@ -2,9 +2,11 @@ import maya
 import requests
 import json
 import pandas as pd
+import os
+import shutil
 
 #Place API token here
-api_key = ''
+api_key = os.environ['api_key']
 header = {'Authorization': 'Bearer ' + api_key}
 #Replace {domain here} with Canvas Domain
 base_url = 'https://{domain here}.instructure.com/api/v1'
@@ -18,6 +20,10 @@ accounts_to_filter = ['sis_id_for_account', 'sis_id_for_account', 'sis_id_for_ac
 course_canvas_id_to_copy = ''
 #Store the courses copied with a migration status. This is a report of the courses that made it through the filter and potentially copied.
 courses_copied_final = 'courses_copied.csv'
+#Full path to move courses pulled from sis imports
+archive_pulled_courses_path = ''
+#Location of path
+archive_courses_copied_path = ''
 
 def main():
     yesterdays__imports = get_yesterdays_sisimports()
@@ -30,6 +36,15 @@ def main():
     new_course_copy_df = courses_to_copy.copy()
     new_course_copy_df['migration_status'] = new_course_copy_df.course_id.apply(course_copy)
     new_course_copy_df.to_csv(courses_copied_final)
+    try:
+        shutil.move(pulled_courses_csv, archive_pulled_courses_path)
+        shutil.move(courses_copied_final, archive_courses_copied_path)
+    except:
+        with open('failed_archive.txt', 'w') as f:
+            f.write('Failed to archive files')
+    finally:
+        print('Success! Program completed.')
+
 
 def get_yesterdays_sisimports():
     """
