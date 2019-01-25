@@ -37,8 +37,11 @@ def main():
     new_course_copy_df['migration_status'] = new_course_copy_df.course_id.apply(course_copy)
     new_course_copy_df.to_csv(courses_copied_final)
     try:
-        shutil.move(pulled_courses_csv, archive_pulled_courses_path)
-        shutil.move(courses_copied_final, archive_courses_copied_path)
+        pulled_courses_file_renamed = f"{pulled_courses_csv}-{maya.now().iso8601()}"
+        courses_copied_file_renamed = f"{courses_copied_final}-{maya.now().iso8601()}"
+        os.rename(pulled_courses_csv, pulled_courses_file_renamed)
+        shutil.move(pulled_courses_file_renamed, archive_pulled_courses_path)
+        shutil.move(courses_copied_file_renamed, archive_courses_copied_path)
     except:
         with open('failed_archive.txt', 'w') as f:
             f.write('Failed to archive files')
