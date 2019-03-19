@@ -34,7 +34,6 @@ def main():
     course_download_urls = get_course_download_urls(yesterdays__imports)
     get_course_data_new(course_download_urls)
     data_to_get_activity = read_to_pandas_and_filter_accounts_and_terms()
-    build_activity_report(data_to_get_activity)
     df_with_activity = build_activity_report(data_to_get_activity)
     courses_to_copy = filter_activity(df_with_activity)
     new_course_copy_df = courses_to_copy.copy()
