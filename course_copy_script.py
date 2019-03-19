@@ -2,6 +2,7 @@ import maya
 import requests
 import json
 import pandas as pd
+from pandas.io.json import json_normalize
 import os
 import shutil
 
@@ -24,6 +25,9 @@ courses_copied_final = 'courses_copied.csv'
 archive_pulled_courses_path = ''
 #Location of path
 archive_courses_copied_path = ''
+#Set to login_id for the user you want to grab course csv's
+login_id_to_get_urls = ''
+
 
 def main():
     yesterdays__imports = get_yesterdays_sisimports()
@@ -67,6 +71,52 @@ def get_yesterdays_sisimports():
         r = requests.get(url=r.links['next']['url'], headers=header)
         sis_imports = json.loads(r.text)
     return sis_imports
+
+def get_course_download_urls(sis_imports):
+
+    all_course_urls = []
+    for item in sis_imports['sis_imports']:
+        for data in item['csv_attachments']:
+            all_course_urls.append(data['url'])
+    return all_course_urls
+
+
+def get_course_download_urls(sis_imports):
+    """
+      Function to get the download URLs of courses
+      :param sis_imports:
+      :return: A list of course URLs from yesterdays imports
+      """
+    courses_urls = []
+    # first, normalize data in dataframe
+    sis_import_df = json_normalize(sis_imports[0]['sis_imports'])
+    sis_import_df['should_check_import'] = sis_import_df['user.login_id'].apply(
+        lambda x: True if x == login_id_to_get_urls else False)
+    sis_import_df.drop(sis_import_df[sis_import_df['should_check_import'] == True].index, inplace=True)
+    attachment = sis_import_df['csv_attachments']
+    try:
+        for item in attachment:
+            if 'canvas_courses.csv' in item[0]['filename']:
+                courses_urls.append(item[0]['url'])
+            else:
+                pass
+    except TypeError:
+        print('error')
+
+    return courses_urls
+
+def get_course_data_new(url_list):
+    """
+    Function to download course data from yesterdays imports
+    :param url_list:
+    :return:
+    """
+    for item in url_list:
+        r = requests.get(item, headers=header)
+        if r.status_code == 200:
+            open(pulled_courses_csv, 'wb').write(r.content)
+        else:
+            print('failed with status code: ' + r.status_code)
 
 def check_account_to_filter(account_row_value):
     """
@@ -155,31 +205,6 @@ def get_discussion_activity(course_id):
         return len(course_url)
     else:
         return 'failed with status code: {}'.format(r.status_code)
-
-def get_course_download_urls(sis_imports):
-    """
-    Function to get the download URLs of courses
-    :param sis_imports:
-    :return: A list of course URLs from yesterdays imports
-    """
-    all_course_urls = []
-    for item in sis_imports['sis_imports']:
-        for data in item['csv_attachments']:
-            all_course_urls.append(data['url'])
-    return all_course_urls
-
-def get_course_data_new(url_list):
-    """
-    Function to download course data from yesterdays imports
-    :param url_list:
-    :return:
-    """
-    for item in url_list:
-        r = requests.get(item, headers=header)
-        if r.status_code == 200:
-            open(pulled_courses_csv, 'wb').write(r.content)
-        else:
-            print('failed with status code: ' + r.status_code)
 
 def read_to_pandas_and_filter_accounts_and_terms():
     """
