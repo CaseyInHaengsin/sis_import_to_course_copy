@@ -72,15 +72,6 @@ def get_yesterdays_sisimports():
     return sis_imports
 
 def get_course_download_urls(sis_imports):
-
-    all_course_urls = []
-    for item in sis_imports['sis_imports']:
-        for data in item['csv_attachments']:
-            all_course_urls.append(data['url'])
-    return all_course_urls
-
-
-def get_course_download_urls(sis_imports):
     """
       Function to get the download URLs of courses
       :param sis_imports:
