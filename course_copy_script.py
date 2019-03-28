@@ -5,108 +5,113 @@ import pandas as pd
 from pandas.io.json import json_normalize
 import os
 import shutil
+import logbook
+import sys
+
+
+app_log = logbook.Logger('App')
 
 #Place API token here
 api_key = os.environ['api_key']
 header = {'Authorization': 'Bearer ' + api_key}
 #Replace {domain here} with Canvas Domain
 base_url = 'https://{domain here}.instructure.com/api/v1'
-# Pull courses from previous day
-#set equal to the filename you would like the pulled courses to equal. This will be read in as a pandas dataframe.
-pulled_courses_csv = 'canvas_courses.csv'
-#Store the sis term id's you do not want included in your copying
-terms_to_filter = ['sis_term_id', 'sis_term_id', 'sis_term_id']
+#Store the sis account id's you do not want included in your copying
 accounts_to_filter = ['sis_id_for_account', 'sis_id_for_account', 'sis_id_for_account']
 #Store the Canvas ID of the course you would like to copy
 course_canvas_id_to_copy = ''
 #Store the courses copied with a migration status. This is a report of the courses that made it through the filter and potentially copied.
 courses_copied_final = 'courses_copied.csv'
-#Full path to move courses pulled from sis imports
-archive_pulled_courses_path = ''
 #Location of path
 archive_courses_copied_path = ''
 #Set to login_id for the user you want to grab course csv's
 login_id_to_get_urls = ''
+#If you would live to have logging, enter a file name.
+filename = 'testlog.txt'
 
 
 def main():
+    #Plug filename into init logging function
+    init_logging(filename)
     yesterdays__imports = get_yesterdays_sisimports()
     course_download_urls = get_course_download_urls(yesterdays__imports)
-    get_course_data_new(course_download_urls)
-    data_to_get_activity = read_to_pandas_and_filter_accounts_and_terms()
+    data_to_check_for_migration = read_to_pandas_and_filter_accounts(course_download_urls)
+    data_to_get_activity = check_for_migration(data_to_check_for_migration)
+    #TODO - catch an exception and gracefully exit script if, by chance, all courses have already been migrated.
     df_with_activity = build_activity_report(data_to_get_activity)
     courses_to_copy = filter_activity(df_with_activity)
     new_course_copy_df = courses_to_copy.copy()
     new_course_copy_df['migration_status'] = new_course_copy_df.course_id.apply(course_copy)
     new_course_copy_df.to_csv(courses_copied_final)
     try:
-        pulled_courses_file_renamed = f"{pulled_courses_csv}-{maya.now().iso8601()}"
-        courses_copied_file_renamed = f"{courses_copied_final}-{maya.now().iso8601()}"
-        os.rename(pulled_courses_csv, pulled_courses_file_renamed)
-        shutil.move(pulled_courses_file_renamed, archive_pulled_courses_path)
-        shutil.move(courses_copied_file_renamed, archive_courses_copied_path)
-    except:
-        with open('failed_archive.txt', 'w') as f:
-            f.write('Failed to archive files')
+        shutil.move(courses_copied_final, f"{archive_courses_copied_path}/{maya.now()}_{courses_copied_final}")
+    except Exception as x:
+        app_log.exception(x)
     finally:
-        print('Success! Program completed.')
+        msg = 'Program execution finished'
+        app_log.notice(msg)
+
+def has_been_migrated(course_id):
+    migration_url = f'{base_url}/courses/sis_course_id:{course_id}/content_migrations'
+    r = requests.get(migration_url, headers=header)
+    if r.ok:
+        course_length = json.loads(r.content)
+        if len(course_length) > 0:
+            return True
+        else:
+            return False
+    else:
+        msg = f'The request call to check for a migration has failed with the status code {r.status_code}. Please check this request'
+        app_log.warn(msg)
 
 
 def get_yesterdays_sisimports():
     """
-    Returns yesterdays sis imports
-    :return: sis imports from Yesterday
+        Returns yesterdays SIS imports
+        :return: sis imports from Yesterday
     """
-    #Set yesterday to the datetime information
-    yesterday = maya.when('yesterday')
-    #Convert datetime to ISO
-    date = yesterday.iso8601()
-    #Get sis imports
-    sis_import_url = '{baseurl}/accounts/self/sis_imports'.format(baseurl=base_url)
-    all_params = {'created_since': date}
+    sis_imports = []
+    yesterday = maya.when('yesterday', timezone='EST').iso8601()
+    sis_import_url = base_url + '/accounts/self/sis_imports'
+    all_params = {'created_since': yesterday, 'per_page': '100'}
     r = requests.get(sis_import_url, headers=header, params=all_params)
-    sis_imports = json.loads(r.text)
+    sis_imports.append(json.loads(r.text))
     while 'next' in r.links:
         r = requests.get(url=r.links['next']['url'], headers=header)
-        sis_imports = json.loads(r.text)
+        sis_imports.append(json.loads(r.text))
     return sis_imports
 
 def get_course_download_urls(sis_imports):
     """
-      Function to get the download URLs of courses
-      :param sis_imports:
-      :return: A list of course URLs from yesterdays imports
-      """
+    Function to get download URLs of courses
+    :param sis_imports: array
+    :return: a list of course URLs from yesterdays imports
+    """
     courses_urls = []
-    # first, normalize data in dataframe
+    #first, normalize data in dataframe
     sis_import_df = json_normalize(sis_imports[0]['sis_imports'])
-    sis_import_df['should_check_import'] = sis_import_df['user.login_id'].apply(
-        lambda x: True if x == login_id_to_get_urls else False)
-    sis_import_df.drop(sis_import_df[sis_import_df['should_check_import'] == True].index, inplace=True)
+    sis_import_df['should_check_import'] = sis_import_df['user.login_id'].apply(lambda x: True if x == login_id_to_get_urls else False)
+    sis_import_df.drop(sis_import_df[sis_import_df['should_check_import'] == False].index, inplace=True)
     attachment = sis_import_df['csv_attachments']
     try:
         for item in attachment:
-            if 'canvas_courses.csv' in item[0]['filename']:
-                courses_urls.append(item[0]['url'])
-            else:
-                pass
-    except TypeError:
-        print('error')
-
+            try:
+                if 'courses.csv' in item[0]['filename']:
+                    courses_urls.append(item[0]['url'])
+                else:
+                    pass
+            except TypeError:
+                msg = f"The program either failed to locate the csv because of it's name, or the json response for imports has changed. The program did not find the course download urls."
+                app_log.warn(msg)
+    except Exception as x:
+        msg = f"The get_course_download_url function failed with an exception {x}"
+        app_log.exception(x)
     return courses_urls
 
-def get_course_data_new(url_list):
-    """
-    Function to download course data from yesterdays imports
-    :param url_list:
-    :return:
-    """
-    for item in url_list:
-        r = requests.get(item, headers=header)
-        if r.status_code == 200:
-            open(pulled_courses_csv, 'wb').write(r.content)
-        else:
-            print('failed with status code: ' + r.status_code)
+def check_for_migration(course_df):
+    course_df['drop_course'] = course_df.course_id.apply(has_been_migrated)
+    course_df.drop(course_df[course_df.drop_course == True].index, inplace=True)
+    return course_df
 
 def check_account_to_filter(account_row_value):
     """
@@ -119,16 +124,6 @@ def check_account_to_filter(account_row_value):
     else:
         return False
 
-def check_term_to_filter(term_row_value):
-    """
-    Function to check if term should be filtered
-    :param term_row_value:
-    :return: True if term should be filtered
-    """
-    if term_row_value in accounts_to_filter:
-        return True
-    else:
-        return False
 
 def get_page_activity(course_id):
     """
@@ -140,9 +135,17 @@ def get_page_activity(course_id):
     r = requests.get(activity_url, headers=header)
     if r.ok:
         course_url = json.loads(r.content)
-        return len(course_url)
+        if len(course_url) > 0:
+            return True
+        else:
+            return False
+    elif r.status_code == 404:
+        return False
     else:
+        msg = f"Failed to get page activity for course {course_id}."
+        app_log.notice(msg)
         return 'failed with status code: {}'.format(r.status_code)
+
 
 def get_assignment_activity(course_id):
     """
@@ -154,9 +157,15 @@ def get_assignment_activity(course_id):
     r = requests.get(activity_url, headers=header)
     if r.ok:
         course_url = json.loads(r.content)
-        return len(course_url)
+        if len(course_url) > 0:
+            return True
+        else:
+            return False
     else:
+        msg = f"Failed to get assignment activity for course {course_id}."
+        app_log.notice(msg)
         return 'failed with status code: {}'.format(r.status_code)
+
 
 def get_quiz_activity(course_id):
     """
@@ -168,18 +177,36 @@ def get_quiz_activity(course_id):
     r = requests.get(activity_url, headers=header)
     if r.ok:
         course_url = json.loads(r.content)
-        return len(course_url)
+        if len(course_url) > 0:
+            return True
+        else:
+            return False
+
     else:
+        msg = f"Failed to get Quiz activity for course {course_id}."
+        app_log.notice(msg)
         return 'failed with status code: {}'.format(r.status_code)
 
+
 def get_module_activity(course_id):
+    """
+    Function to get module activity
+    :param: course_id:
+    :return: True if length is greater than 0
+    """
     activity_url = '{baseurl}/courses/sis_course_id:{courseid}/modules'.format(baseurl=base_url, courseid=course_id)
     r = requests.get(activity_url, headers=header)
     if r.ok:
         course_url = json.loads(r.content)
-        return len(course_url)
+        if len(course_url) > 0:
+            return True
+        else:
+            return False
     else:
+        msg = f"Failed to get module activity for course {course_id}."
+        app_log.notice(msg)
         return 'failed with status code: {}'.format(r.status_code)
+
 
 def get_discussion_activity(course_id):
     """
@@ -188,23 +215,31 @@ def get_discussion_activity(course_id):
     :return: Discussion activity count
     """
     activity_url = '{baseurl}/courses/sis_course_id:{courseid}/discussion_topics'.format(baseurl=base_url,
-                                                                                courseid=course_id)
+                                                                                         courseid=course_id)
     r = requests.get(activity_url, headers=header)
     if r.ok:
         course_url = json.loads(r.content)
-        return len(course_url)
+        if len(course_url) > 0:
+            return True
+        else:
+            return False
     else:
+        msg = f"Failed to get discussion activity for course {course_id}."
+        app_log.notice(msg)
         return 'failed with status code: {}'.format(r.status_code)
 
-def read_to_pandas_and_filter_accounts_and_terms():
+def read_to_pandas_and_filter_accounts(course_download_urls):
     """
     Function that reads pulled courses and filters accounts and terms
     :return: Dataframe with account information
     """
-    previous_day = pd.read_csv(pulled_courses_csv)
-    previous_day['remove_account'] = previous_day.account_id.apply(check_account_to_filter)
-    previous_day['remove_term'] = previous_day.account_id.apply(check_term_to_filter)
-    data_to_get_activity = previous_day.loc[(previous_day['remove_account'] == False) & (previous_day['remove_term'] == False)]
+    try:
+        get_all_course_data = pd.concat([pd.read_csv(f) for f in course_download_urls])
+    except Exception as x:
+        app_log.exception(x)
+
+    get_all_course_data['remove_account'] = get_all_course_data.account_id.apply(check_account_to_filter)
+    data_to_get_activity = get_all_course_data.loc[(get_all_course_data['remove_account'] == False)]
     return data_to_get_activity
 
 def build_activity_report(data_to_get_all_activity):
@@ -226,7 +261,7 @@ def filter_activity(report_with_activity):
     :param report_with_activity:
     :return: A dataframe with filtered courses
     """
-    filtered_activity_dataframe = report_with_activity.loc[(report_with_activity['page_activity'] <= 0) & (report_with_activity['assignment_activity'] <= 0) & (report_with_activity['quiz_activity'] <= 0) & (report_with_activity['module_activity'] <= 0) & (report_with_activity['discussion_activity'] <= 0)]
+    filtered_activity_dataframe = report_with_activity[((report_with_activity.page_activity) == False) & (report_with_activity.assignment_activity == False) & (report_with_activity.quiz_activity == False) & (report_with_activity.module_activity == False) & (report_with_activity.discussion_activity == False)]
     return filtered_activity_dataframe
 
 def course_copy(course_id):
@@ -240,7 +275,24 @@ def course_copy(course_id):
     if r.ok:
         return r.status_code
     else:
+        msg = f"Failed to make a course copy for course {course_id}."
+        app_log.notice(msg)
         return 'failed with status code: {}'.format(r.status_code)
+
+def init_logging(filename: str = None):
+    level = logbook.TRACE
+
+    if filename:
+        logbook.TimedRotatingFileHandler(filename, level=level).push_application()
+    else:
+        logbook.StreamHandler(sys.stdout, level=level).push_application()
+    msg = 'Logging initialized, level: {}, mode: {}'.format(
+        level,
+        "stdout mode" if not filename else 'file mode: ' + filename
+    )
+    logger = logbook.Logger('Startup')
+    logger.notice(msg)
+
 
 if __name__ == '__main__':
     main()
