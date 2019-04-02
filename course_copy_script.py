@@ -14,10 +14,11 @@ app_log = logbook.Logger('App')
 #Place API token here
 api_key = os.environ['api_key']
 header = {'Authorization': 'Bearer ' + api_key}
-#Replace {domain here} with Canvas Domain
-base_url = 'https://{domain here}.instructure.com/api/v1'
+#Replace {domain here} with Canvas Domain. Should end with domain/api/v1
+base_url = ''
 #Store the sis account id's you do not want included in your copying
-accounts_to_filter = ['sis_id_for_account', 'sis_id_for_account', 'sis_id_for_account']
+accounts_to_filter = ['accounts_sis_id', 'accounts_sis_id', 'accounts_sis_id', 'accounts_sis_id', 'accounts_sis_id', 'accounts_sis_id']
+#accounts_to_filter = ['sis_id_for_account', 'sis_id_for_account', 'sis_id_for_account']
 #Store the Canvas ID of the course you would like to copy
 course_canvas_id_to_copy = ''
 #Store the courses copied with a migration status. This is a report of the courses that made it through the filter and potentially copied.
@@ -123,7 +124,12 @@ def check_account_to_filter(account_row_value):
         return True
     else:
         return False
-
+#Term filtering here
+# def check_term_to_filter(term_row_value):
+#     if term_row_value in accounts_to_filter:
+#         return True
+#     else:
+#         return False
 
 def get_page_activity(course_id):
     """
@@ -131,7 +137,7 @@ def get_page_activity(course_id):
     :param course_id:
     :return: Page activity count
     """
-    activity_url = '{baseurl}/courses/{courseid}/pages'.format(baseurl=base_url, courseid=course_id)
+    activity_url = '{baseurl}/courses/sis_course_id:{courseid}/pages'.format(baseurl=base_url, courseid=course_id)
     r = requests.get(activity_url, headers=header)
     if r.ok:
         course_url = json.loads(r.content)
@@ -234,13 +240,22 @@ def read_to_pandas_and_filter_accounts(course_download_urls):
     :return: Dataframe with account information
     """
     try:
-        get_all_course_data = pd.concat([pd.read_csv(f) for f in course_download_urls])
+        temp_data = pd.concat([pd.read_csv(f) for f in course_download_urls])
+        get_all_course_data = temp_data.drop_dupliates(['course_id'], keep='first')
     except Exception as x:
         app_log.exception(x)
 
     get_all_course_data['remove_account'] = get_all_course_data.account_id.apply(check_account_to_filter)
     data_to_get_activity = get_all_course_data.loc[(get_all_course_data['remove_account'] == False)]
     return data_to_get_activity
+
+# def read_to_pandas_and_filter_accounts_and_terms():
+#     temp_data = pd.concat([pd.read_csv(f) for f in course_download_urls])
+#     get_all_course_data = temp_data.drop_dupliates(['course_id'], keep='first')
+#     get_all_course_data['remove_account'] = get_all_course_data.account_id.apply(check_account_to_filter)
+#     get_all_course_data['remove_term'] = get_all_course_data.account_id.apply(check_term_to_filter)
+#     data_to_get_activity = get_all_course_data.loc[(previous_day['remove_account'] == False) & (previous_day['remove_term'] == False)]
+#     return data_to_get_activity
 
 def build_activity_report(data_to_get_all_activity):
     """
