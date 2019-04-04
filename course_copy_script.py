@@ -18,7 +18,8 @@ header = {'Authorization': 'Bearer ' + api_key}
 base_url = ''
 #Store the sis account id's you do not want included in your copying
 accounts_to_filter = ['accounts_sis_id', 'accounts_sis_id', 'accounts_sis_id', 'accounts_sis_id', 'accounts_sis_id', 'accounts_sis_id']
-#accounts_to_filter = ['sis_id_for_account', 'sis_id_for_account', 'sis_id_for_account']
+##Store the sis account id's you do not want included in your copying
+#terms_to_filter = ['sis_id_for_account', 'sis_id_for_account', 'sis_id_for_account']
 #Store the Canvas ID of the course you would like to copy
 course_canvas_id_to_copy = ''
 #Store the courses copied with a migration status. This is a report of the courses that made it through the filter and potentially copied.
@@ -27,7 +28,7 @@ courses_copied_final = 'courses_copied.csv'
 archive_courses_copied_path = ''
 #Set to login_id for the user you want to grab course csv's
 login_id_to_get_urls = ''
-#If you would live to have logging, enter a file name.
+#If you would like to have logging, enter a file name.
 filename = 'testlog.txt'
 
 
@@ -241,7 +242,7 @@ def read_to_pandas_and_filter_accounts(course_download_urls):
     """
     try:
         temp_data = pd.concat([pd.read_csv(f) for f in course_download_urls])
-        get_all_course_data = temp_data.drop_dupliates(['course_id'], keep='first')
+        get_all_course_data = temp_data.drop_duplicates(['course_id'], keep='first')
     except Exception as x:
         app_log.exception(x)
 
